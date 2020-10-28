@@ -38,7 +38,19 @@ class RootCellError(Exception):
 class NeighborsError(Exception):
     def __init__(self, message):
         self.message = message
- 
+
+
+# Define Errors
+class RootCellError(Exception):
+    def __init__(self, message):
+        self.message = message
+
+class NeighborsError(Exception):
+    def __init__(self, message):
+        self.message = message
+
+
+
 
 ### Silhouette score
 def silhouette(adata, group_key, metric='euclidean', embed='X_pca', scale=True):
@@ -302,7 +314,7 @@ def ari(adata, group1, group2):
 
 ### Isolated label score
 def isolated_labels(adata, label_key, batch_key, cluster_key="iso_cluster", 
-                    cluster=True, n=None, all_=False, verbose=True):
+                    cluster=True, n=None, all_=False, verbose=True,embed="X_emb"):
     """
     score how well labels of isolated labels are distiguished in the dataset by
         1. clustering-based approach
@@ -310,8 +322,8 @@ def isolated_labels(adata, label_key, batch_key, cluster_key="iso_cluster",
     params:
         cluster: if True, use clustering approach, otherwise use silhouette score approach
         n: max number of batches per label for label to be considered as isolated.
-            if n is integer, consider labels that are present for n batches as isolated
-            if n=None, consider minimum number of batches that labels are present in
+            if n=1, take labels that are present for a single batch
+            if n=None, consider any label that is missing at least 1 batch
         all_: return scores for all isolated labels instead of aggregated mean
     return:
         by default, mean of scores for each isolated label
@@ -321,7 +333,8 @@ def isolated_labels(adata, label_key, batch_key, cluster_key="iso_cluster",
     scores = {}
     isolated_labels = get_isolated_labels(adata, label_key, batch_key, cluster_key, n=n, verbose=verbose)
     for label in isolated_labels:
-        score = score_isolated_label(adata, label_key, cluster_key, label, cluster=cluster, verbose=verbose)
+        score = score_isolated_label(adata, label_key, cluster_key, label, cluster=cluster, verbose=verbose,
+                                     embed=embed)
         scores[label] = score
     
     if all_:
@@ -413,9 +426,9 @@ def precompute_hvg_batch(adata, batch, features, n_hvg=500, save_hvg=False):
         adata.uns['hvg_before']=hvg_dir
     else:
         return hvg_dir
-        
+
     
-    
+
 ### Highly Variable Genes conservation
 def hvg_overlap(adata_pre, adata_post, batch, n_hvg=500):
     hvg_post = adata_post.var_names
@@ -752,7 +765,7 @@ def select_hvg(adata, select=True):
     else:
         return adata
 
-   
+
 ### diffusion for connectivites matrix extension
 def diffusion_conn(adata, min_k=50, copy=True, max_iterations=26):
     '''
@@ -766,18 +779,18 @@ def diffusion_conn(adata, min_k=50, copy=True, max_iterations=26):
     Returns:
        The diffusion-enhanced connectivities matrix of a copy of the AnnData object
        with the diffusion-enhanced connectivities matrix is in 
-       `adata.uns["neighbors"]["conectivities"]`
+       `adata.obsp["conectivities"]`
     '''
     if 'neighbors' not in adata.uns:
         raise ValueError('`neighbors` not in adata object. '
                          'Please compute a neighbourhood graph!')
 
-    if 'connectivities' not in adata.uns['neighbors']:
-        raise ValueError('`connectivities` not in `adata.uns["neighbors"]`. '
+    if 'connectivities' not in adata.obsp:
+        raise ValueError('`connectivities` not in `adata.obsp`. '
                          'Please pass an object with connectivities computed!')
 
 
-    T = adata.uns['neighbors']['connectivities']
+    T = adata.obsp['connectivities']
 
     #Normalize T with max row sum
     # Note: This keeps the matrix symmetric and ensures |M| doesn't keep growing
@@ -786,7 +799,7 @@ def diffusion_conn(adata, min_k=50, copy=True, max_iterations=26):
     M = T
 
     # Check for disconnected component
-    n_comp, labs = connected_components(adata.uns['neighbors']['connectivities'],
+    n_comp, labs = connected_components(adata.obsp['connectivities'],
                                                        connection='strong')
     
     if n_comp > 1:
@@ -814,13 +827,13 @@ def diffusion_conn(adata, min_k=50, copy=True, max_iterations=26):
 
     if copy:
         adata_tmp = adata.copy()
-        adata_tmp.uns['neighbors'].update({'diffusion_connectivities': M})
+        adata_tmp.obsp.update({'diffusion_connectivities': M})
         return adata_tmp
 
     else:
         return M
 
-    
+
 ### diffusion neighbourhood score
 def diffusion_nn(adata, k, max_iterations=26):
     '''
@@ -835,11 +848,11 @@ def diffusion_nn(adata, k, max_iterations=26):
         raise ValueError('`neighbors` not in adata object. '
                          'Please compute a neighbourhood graph!')
     
-    if 'connectivities' not in adata.uns['neighbors']:
-        raise ValueError('`connectivities` not in `adata.uns["neighbors"]`. '
+    if 'connectivities' not in adata.obsp:
+        raise ValueError('`connectivities` not in `adata.obsp`. '
                          'Please pass an object with connectivities computed!')
         
-    T = adata.uns['neighbors']['connectivities']
+    T = adata.obsp['connectivities']
 
     # Row-normalize T
     T = sparse.diags(1/T.sum(1).A.ravel())*T
@@ -882,7 +895,7 @@ def lisi_knn(adata, batch_key, label_key, perplexity=None, verbose=False):
     #get knn index matrix
     if verbose:
         print("Convert nearest neighbor matrix and distances for LISI.")
-    dist_mat = sparse.find(adata.uns['neighbors']['distances'])
+    dist_mat = sparse.find(adata.obsp['distances'])
     #get number of nearest neighbours parameter
     if 'params' not in adata.uns['neighbors']:
         #estimate the number of nearest neighbors as the median 
@@ -892,9 +905,9 @@ def lisi_knn(adata, batch_key, label_key, perplexity=None, verbose=False):
         n_nn = n_nn.astype('int')
     else:
         n_nn = adata.uns['neighbors']['params']['n_neighbors']-1
-    nn_index = np.empty(shape=(adata.uns['neighbors']['distances'].shape[0],
+    nn_index = np.empty(shape=(adata.obsp['distances'].shape[0],
                                n_nn))
-    nn_dists = np.empty(shape=(adata.uns['neighbors']['distances'].shape[0],
+    nn_dists = np.empty(shape=(adata.obsp['distances'].shape[0],
                                n_nn))
     index_out = []
     for cell_id in np.arange(np.min(dist_mat[0]), np.max(dist_mat[0])+1):
@@ -1082,7 +1095,7 @@ def lisi_knn_py(adata, batch_key, label_key, perplexity=None, verbose=False):
     #get knn index matrix
     if verbose:
         print("Convert nearest neighbor matrix and distances for LISI.")
-    dist_mat = sparse.find(adata.uns['neighbors']['distances'])
+    dist_mat = sparse.find(adata.obsp['distances'])
     #get number of nearest neighbours parameter
     if 'params' not in adata.uns['neighbors']:
         #estimate the number of nearest neighbors as the median 
@@ -1093,10 +1106,10 @@ def lisi_knn_py(adata, batch_key, label_key, perplexity=None, verbose=False):
     else:
         n_nn = adata.uns['neighbors']['params']['n_neighbors']-1
     #initialise index and fill it with NaN values
-    nn_index = np.empty(shape=(adata.uns['neighbors']['distances'].shape[0],
+    nn_index = np.empty(shape=(adata.obsp['distances'].shape[0],
                                n_nn))
     nn_index[:] = np.NaN
-    nn_dists = np.empty(shape=(adata.uns['neighbors']['distances'].shape[0],
+    nn_dists = np.empty(shape=(adata.obsp['distances'].shape[0],
                                n_nn))
     nn_dists[:] = np.NaN
     index_out = []
@@ -1152,7 +1165,7 @@ def lisi_knn_py(adata, batch_key, label_key, perplexity=None, verbose=False):
     
     return lisi_estimate
 
-    
+
 def lisi_matrix(adata, batch_key, label_key, matrix=None, verbose=False):
     """
     deprecated
@@ -1223,16 +1236,16 @@ def lisi(adata, batch_key, label_key, k0=90, type_= None, scale=True, verbose=Fa
     #lisi_score = lisi_knn(adata=adata, batch_key=batch_key, label_key=label_key, verbose=verbose)
     lisi_score = lisi_knn_py(adata=adata_tmp, batch_key=batch_key, label_key=label_key, verbose=verbose)
     
-    
-    # iLISI: nbatches good, 1 bad
+    # iLISI: 2 good, 1 bad
     ilisi_score = np.nanmedian(lisi_score[batch_key])
-    # cLISI: 1 good, nbatches bad
+    # cLISI: 1 good, 2 bad
     clisi_score = np.nanmedian(lisi_score[label_key])
     
     if scale:
-        #get number of batches
-        nbatches = len(np.unique(adata.obs[batch_key]))
-        ilisi_score, clisi_score = scale_lisi(ilisi_score, clisi_score, nbatches)
+        #Comment: Scaling should be applied at the end when all scenarios are rated 
+        ilisi_score = ilisi_score - 1
+        #scale clisi score to 0 bad 1 good
+        clisi_score = 2 - clisi_score
     
     return ilisi_score, clisi_score
 
@@ -1378,7 +1391,7 @@ def lisi_graph_py(adata, batch_key, n_neighbors = 90, perplexity=None, subsample
         print("Compute knn on shortest paths") 
     
     #set connectivities to 3e-308 if they are lower than 3e-308 (because cpp can't handle double values smaller than that).
-    connectivities = adata.uns['neighbors']['connectivities'] #csr matrix format
+    connectivities = adata.obsp['connectivities'] #csr matrix format
     large_enough = connectivities.data>=3e-308
     if verbose:
         n_too_small = np.sum(large_enough==False)
@@ -1467,7 +1480,7 @@ def lisi_graph_py(adata, batch_key, n_neighbors = 90, perplexity=None, subsample
 #LISI graph function (analoguous to lisi function) 
 def lisi_graph(adata, batch_key=None, label_key=None, k0=90, type_= None, 
                subsample = None, scale=True, 
-               multiprocessing = None, nodes = None, verbose=False):
+               multiprocessing = None, nodes = None, verbose=False, ilisi=True,clisi=True):
     """
     Compute lisi score (after integration)
     params:
@@ -1485,6 +1498,8 @@ def lisi_graph(adata, batch_key=None, label_key=None, k0=90, type_= None,
                          via multiprocessing is performed
         nodes: number of nodes (i.e. CPUs to use for multiprocessing); ignored, if
                multiprocessing is set to None
+        ilisi: compute iLISI, if False return np.nan
+        clisi: compute cLISI, if False return np.nan
     return:
         pd.DataFrame with median cLISI and median iLISI scores 
         (following the harmony paper)
@@ -1506,31 +1521,37 @@ def lisi_graph(adata, batch_key=None, label_key=None, k0=90, type_= None,
     #if knn - do not compute a new neighbourhood graph (it exists already)
        
     #compute LISI score
-    ilisi_score = lisi_graph_py(adata = adata, batch_key = batch_key, 
+    if ilisi:
+        ilisi_score = lisi_graph_py(adata = adata, batch_key = batch_key, 
                   n_neighbors = k0, perplexity=None, subsample = subsample, 
                   multiprocessing = multiprocessing, nodes = nodes, verbose=verbose)
-    
-    clisi_score = lisi_graph_py(adata = adata, batch_key = label_key, 
+        # iLISI: nbatches good, 1 bad
+        ilisi_score = np.nanmedian(ilisi_score)
+    else:
+        ilisi_score = np.nan
+    if clisi:
+        clisi_score = lisi_graph_py(adata = adata, batch_key = label_key, 
                   n_neighbors = k0, perplexity=None, subsample = subsample, 
                   multiprocessing = multiprocessing, nodes = nodes, verbose=verbose)
-    
-    # iLISI: nbatches good, 1 bad
-    ilisi_score = np.nanmedian(ilisi_score)
-    # cLISI: 1 good, nbatches bad
-    clisi_score = np.nanmedian(clisi_score)
-    
+        # cLISI: 1 good, nbatches bad
+        clisi_score = np.nanmedian(clisi_score)
+    else:
+        clisi_score = np.nan
     if scale:
         #get number of batches
         nbatches = len(np.unique(adata.obs[batch_key]))
         ilisi_score, clisi_score = scale_lisi(ilisi_score, clisi_score, nbatches)
-
+    
     return ilisi_score, clisi_score
+
 
 def scale_lisi(ilisi_score, clisi_score, nbatches):
     #scale iLISI score to 0 bad 1 good
-    ilisi_score = (ilisi_score - 1)/(nbatches-1)
+    if ilisi_score != np.nan:
+        ilisi_score = (ilisi_score - 1)/(nbatches-1)
     #scale clisi score to 0 bad 1 good
-    clisi_score = (nbatches - clisi_score)/(nbatches-1)
+    if clisi_score != np.nan:
+        clisi_score = (nbatches - clisi_score)/(nbatches-1)
     return ilisi_score, clisi_score
 
 
@@ -1591,11 +1612,11 @@ def kBET(adata, batch_key, label_key, embed='X_pca', type_ = None,
     else:
         #check if pre-computed neighbours are stored in input file
         adata_tmp = adata.copy()
-        if 'diffusion_connectivities' not in adata.uns['neighbors']:
+        if 'diffusion_connectivities' not in adata.obsp:
             if verbose:
                 print(f"Compute: Diffusion neighbours.")
             adata_tmp = diffusion_conn(adata, min_k = 50, copy = True)
-        adata_tmp.uns['neighbors']['connectivities'] = adata_tmp.uns['neighbors']['diffusion_connectivities']
+        adata_tmp.obsp['connectivities'] = adata_tmp.obsp['diffusion_connectivities']
             
     if verbose:
         print(f"batch: {batch_key}")
@@ -1623,7 +1644,7 @@ def kBET(adata, batch_key, label_key, embed='X_pca', type_ = None,
                 
             if verbose:
                 print(f"Use {k0} nearest neighbors.")
-            n_comp, labs = connected_components(adata_sub.uns['neighbors']['connectivities'], 
+            n_comp, labs = connected_components(adata_sub.obsp['connectivities'], 
                                                               connection='strong')
             if n_comp > 1:
                 #check the number of components where kBET can be computed upon
@@ -1680,7 +1701,7 @@ def kBET(adata, batch_key, label_key, embed='X_pca', type_ = None,
 # determine root cell for trajectory conservation metric
 def get_root(adata_pre, adata_post, ct_key, dpt_dim=3):
     
-    n_components, adata_post.obs['neighborhood'] = connected_components(csgraph=adata_post.uns['neighbors']['connectivities'], directed=False, return_labels=True)
+    n_components, adata_post.obs['neighborhood'] = connected_components(csgraph=adata_post.obsp['connectivities'], directed=False, return_labels=True)
     
     start_clust = adata_pre.obs.groupby([ct_key]).mean()['dpt_pseudotime'].idxmin()
     min_dpt = adata_pre.obs[adata_pre.obs[ct_key] == start_clust].index
@@ -1743,7 +1764,7 @@ def graph_connectivity(adata_post, label_key):
 
     for ct in adata_post.obs[label_key].cat.categories:
         adata_post_sub = adata_post[adata_post.obs[label_key].isin([ct]),]
-        _,labs = connected_components(adata_post_sub.uns['neighbors']['connectivities'], connection='strong')
+        _,labs = connected_components(adata_post_sub.obsp['connectivities'], connection='strong')
         tab = pd.value_counts(labs)
         clust_res.append(tab[0]/sum(tab))
 
@@ -1772,8 +1793,9 @@ def metrics(adata, adata_int, batch_key, label_key,
             nmi_=False, ari_=False, nmi_method='arithmetic', nmi_dir=None, 
             silhouette_=False,  embed='X_pca', si_metric='euclidean',
             pcr_=False, cell_cycle_=False, organism='mouse', verbose=False,
+
             isolated_labels_=False, n_isolated=None, graph_conn_=False,
-            kBET_=False, kBET_sub=0.5, lisi_graph_=False, lisi_raw=False,
+            kBET_=False, kBET_sub=0.5, lisi_graph_=False,
             trajectory_= False, type_ = None
            ):
     """
@@ -1890,20 +1912,15 @@ def metrics(adata, adata_int, batch_key, label_key,
     
     if lisi_graph_:
         print('LISI graph score...')
-        ilisi_raw, clisi_raw = lisi_graph(adata_int, batch_key=batch_key, label_key=label_key,
-                                        type_=type_, subsample=kBET_sub*100, scale=False,
+        ilisi_g_score, clisi_g_score = lisi_graph(adata_int, batch_key=batch_key, label_key=label_key,
+                                        type_ = type_, subsample = kBET_sub*100, 
                                         multiprocessing = True, verbose=verbose)
-        nbatches = len(np.unique(adata_int.obs[batch_key]))
-        ilisi_scaled, clisi_scaled = scale_lisi(ilisi_raw, clisi_raw, nbatches)
-        if lisi_raw:
-            results['iLISI_raw'] = ilisi_raw
-            results['cLISI_raw'] = clisi_raw
     else:
-        ilisi_scaled = np.nan
-        clisi_scaled = np.nan
-    results['iLISI'] = ilisi_scaled
-    results['cLISI'] = clisi_scaled
-
+        ilisi_g_score = np.nan
+        clisi_g_score = np.nan
+    results['iLISI'] = ilisi_g_score
+    results['cLISI'] = clisi_g_score
+        
     if hvg_score_:
         hvg_score = hvg_overlap(adata, adata_int, batch_key)
     else:
