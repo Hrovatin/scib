@@ -1356,7 +1356,7 @@ def compute_simpson_index_graph(input_path = None,
 
 #function to prepare call of compute_simpson_index
 def lisi_graph_py(adata, batch_key, n_neighbors = 90, perplexity=None, subsample = None, 
-                  multiprocessing = None, nodes = None, verbose=False):
+                  multiprocessing = None, nodes = None, verbose=False,tmp='/tmp/'):
     """
     Compute LISI score on shortes path based on kNN graph provided in the adata object. 
     By default, perplexity is chosen as 1/3 * number of nearest neighbours in the knn-graph.
@@ -1416,7 +1416,7 @@ def lisi_graph_py(adata, batch_key, n_neighbors = 90, perplexity=None, subsample
         n_chunks = n_processes
     
     #create temporary directory
-    dir_path = "/tmp/lisi_tmp"+str(int(time()))
+    dir_path = tmp+"lisi_tmp"+str(int(time()))
     while path.isdir(dir_path):
         dir_path += '2'
     dir_path += '/'
@@ -1480,7 +1480,8 @@ def lisi_graph_py(adata, batch_key, n_neighbors = 90, perplexity=None, subsample
 #LISI graph function (analoguous to lisi function) 
 def lisi_graph(adata, batch_key=None, label_key=None, k0=90, type_= None, 
                subsample = None, scale=True, 
-               multiprocessing = None, nodes = None, verbose=False, ilisi=True,clisi=True):
+               multiprocessing = None, nodes = None, verbose=False, 
+               ilisi=True,clisi=True,debug=False,**kwargs):
     """
     Compute lisi score (after integration)
     params:
@@ -1490,7 +1491,7 @@ def lisi_graph(adata, batch_key=None, label_key=None, k0=90, type_= None,
         k0: number of nearest neighbors to compute lisi score
             Please note that the initial neighborhood size that is
             used to compute shortest paths is 15.
-        type_: type of data integration, either knn, full or embed
+        type_: type of data integration, either  full or embed or precomputed
         subsample: Percentage of observations (integer between 0 and 100) 
                    to which lisi scoring should be subsampled
         scale: scale output values (True/False)
@@ -1500,6 +1501,7 @@ def lisi_graph(adata, batch_key=None, label_key=None, k0=90, type_= None,
                multiprocessing is set to None
         ilisi: compute iLISI, if False return np.nan
         clisi: compute cLISI, if False return np.nan
+        kwargs: for lisi_graph_py
     return:
         pd.DataFrame with median cLISI and median iLISI scores 
         (following the harmony paper)
@@ -1507,24 +1509,32 @@ def lisi_graph(adata, batch_key=None, label_key=None, k0=90, type_= None,
     
     checkAdata(adata)
     checkBatch(batch_key, adata.obs)
-    checkBatch(label_key, adata.obs)
-        
+    if clisi:
+        checkBatch(label_key, adata.obs)
+    
+    if debug:
+        print('Scanpy info for LISI')
+        print(sc)
+        print(sc.__version__)
+    
     #recompute neighbours
     if (type_ == 'embed'):
         adata_tmp = sc.pp.neighbors(adata,n_neighbors=15, use_rep = 'X_emb', copy=True)
-    if (type_ == 'full'):
+    elif (type_ == 'full'):
         if 'X_pca' not in adata.obsm.keys():
             sc.pp.pca(adata, svd_solver = 'arpack')
         adata_tmp = sc.pp.neighbors(adata, n_neighbors=15, copy=True)
-    else:
+    elif (type_ == 'precomputed'):
         adata_tmp = adata.copy()
+    else:
+        raise ValueError('Unknown type_')
     #if knn - do not compute a new neighbourhood graph (it exists already)
        
     #compute LISI score
     if ilisi:
         ilisi_score = lisi_graph_py(adata = adata, batch_key = batch_key, 
                   n_neighbors = k0, perplexity=None, subsample = subsample, 
-                  multiprocessing = multiprocessing, nodes = nodes, verbose=verbose)
+                  multiprocessing = multiprocessing, nodes = nodes, verbose=verbose,**kwargs)
         # iLISI: nbatches good, 1 bad
         ilisi_score = np.nanmedian(ilisi_score)
     else:
@@ -1532,7 +1542,7 @@ def lisi_graph(adata, batch_key=None, label_key=None, k0=90, type_= None,
     if clisi:
         clisi_score = lisi_graph_py(adata = adata, batch_key = label_key, 
                   n_neighbors = k0, perplexity=None, subsample = subsample, 
-                  multiprocessing = multiprocessing, nodes = nodes, verbose=verbose)
+                  multiprocessing = multiprocessing, nodes = nodes, verbose=verbose,**kwargs)
         # cLISI: 1 good, nbatches bad
         clisi_score = np.nanmedian(clisi_score)
     else:
