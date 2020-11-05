@@ -142,7 +142,7 @@ def plot_silhouette_score(adata_dict, batch_key, group_key, metric='euclidean',
                 plt.show()
 
 ### NMI normalised mutual information
-def nmi(adata, group1, group2, method="arithmetic", nmi_dir=None):
+def nmi(adata, group1, group2, method="arithmetic", nmi_dir=None, ignore_na=False):
     """
     Normalized mutual information NMI based on 2 different cluster assignments `group1` and `group2`
     params:
@@ -177,6 +177,15 @@ def nmi(adata, group1, group2, method="arithmetic", nmi_dir=None):
     
     if len(group1) != len(group2):
         raise ValueError(f'different lengths in group1 ({len(group1)}) and group2 ({len(group2)})')
+    
+    # Remove elements nan in any of the groups
+    if ignore_na:
+        na_idx1=np.argwhere(pd.isna(group1)).flatten().tolist()
+        na_idx2=np.argwhere(pd.isna(group2)).flatten().tolist()
+        na_idx=set(na_idx1+na_idx2)
+        group1 = [el for idx, el in enumerate(group1) if idx not in na_idx]
+        group2 = [el for idx, el in enumerate(group2) if idx not in na_idx]
+        #print('NMI removed %i nan elements'% len(na_idx))
     
     # choose method
     if method in ['max', 'min', 'geometric', 'arithmetic']:
@@ -1478,7 +1487,7 @@ def lisi_graph_py(adata, batch_key, n_neighbors = 90, perplexity=None, subsample
     return lisi_estimate
 
 #LISI graph function (analoguous to lisi function) 
-def lisi_graph(adata, batch_key=None, label_key=None, k0=90, type_= None, 
+def lisi_graph(adata, batch_key=None, label_key=None, k0=90, type_= 'knn', 
                subsample = None, scale=True, 
                multiprocessing = None, nodes = None, verbose=False, 
                ilisi=True,clisi=True,debug=False,**kwargs):
@@ -1491,7 +1500,7 @@ def lisi_graph(adata, batch_key=None, label_key=None, k0=90, type_= None,
         k0: number of nearest neighbors to compute lisi score
             Please note that the initial neighborhood size that is
             used to compute shortest paths is 15.
-        type_: type of data integration, either  full or embed or precomputed
+        type_: type of data integration, either  full or embed or knn
         subsample: Percentage of observations (integer between 0 and 100) 
                    to which lisi scoring should be subsampled
         scale: scale output values (True/False)
@@ -1506,7 +1515,8 @@ def lisi_graph(adata, batch_key=None, label_key=None, k0=90, type_= None,
         pd.DataFrame with median cLISI and median iLISI scores 
         (following the harmony paper)
     """
-    
+    if debug:
+        print('Debug lisi')
     checkAdata(adata)
     checkBatch(batch_key, adata.obs)
     if clisi:
@@ -1524,7 +1534,7 @@ def lisi_graph(adata, batch_key=None, label_key=None, k0=90, type_= None,
         if 'X_pca' not in adata.obsm.keys():
             sc.pp.pca(adata, svd_solver = 'arpack')
         adata_tmp = sc.pp.neighbors(adata, n_neighbors=15, copy=True)
-    elif (type_ == 'precomputed'):
+    elif (type_ == 'knn'):
         adata_tmp = adata.copy()
     else:
         raise ValueError('Unknown type_')
@@ -1532,7 +1542,7 @@ def lisi_graph(adata, batch_key=None, label_key=None, k0=90, type_= None,
        
     #compute LISI score
     if ilisi:
-        ilisi_score = lisi_graph_py(adata = adata, batch_key = batch_key, 
+        ilisi_score = lisi_graph_py(adata = adata_tmp, batch_key = batch_key, 
                   n_neighbors = k0, perplexity=None, subsample = subsample, 
                   multiprocessing = multiprocessing, nodes = nodes, verbose=verbose,**kwargs)
         # iLISI: nbatches good, 1 bad
@@ -1540,7 +1550,7 @@ def lisi_graph(adata, batch_key=None, label_key=None, k0=90, type_= None,
     else:
         ilisi_score = np.nan
     if clisi:
-        clisi_score = lisi_graph_py(adata = adata, batch_key = label_key, 
+        clisi_score = lisi_graph_py(adata = adata_tmp, batch_key = label_key, 
                   n_neighbors = k0, perplexity=None, subsample = subsample, 
                   multiprocessing = multiprocessing, nodes = nodes, verbose=verbose,**kwargs)
         # cLISI: 1 good, nbatches bad
@@ -1630,6 +1640,7 @@ def kBET(adata, batch_key, label_key, embed='X_pca', type_ = None,
             
     if verbose:
         print(f"batch: {batch_key}")
+        print(f"label: {label_key}")
         
     #set upper bound for k0
     size_max = 2**31 - 1
